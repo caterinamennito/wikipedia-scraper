@@ -1,10 +1,11 @@
-from requests import Session
+from requests import Session, RequestException
 import re
 from bs4 import BeautifulSoup
 import concurrent.futures
 import json
 import functools
-
+import logging
+from typing import Any, Dict, List, Optional
 
 def authenticated(function):
     @functools.wraps(function)
@@ -15,86 +16,124 @@ def authenticated(function):
     return decorated
 
 class WikipediaScraper:
+    """
+    Scrapes the first Wikipedia paragraphs of some country leaders.
+    """
 
     def __init__(self):
-        self.base_url = "https://country-leaders.onrender.com"
-        self.leaders_endpoint = "/leaders"
-        self.countries_endpoint = "/countries"
-        self.cookies_endpoint = "/cookie"
-        self.leaders_data = {}
-        self.session = None
+        self.base_url: str = "https://country-leaders.onrender.com"
+        self.leaders_endpoint: str = "/leaders"
+        self.countries_endpoint: str = "/countries"
+        self.cookies_endpoint: str = "/cookie"
+        self.leaders_data: Dict[str, List[Dict[str, Any]]] = {}
+        self.session: Optional[Session] = None
 
-    def __enter__(self):
+    def __enter__(self) -> "WikipediaScraper":
         self.session = Session()
         self.__set_cookies()
-        print('session created')
+        logging.info('Session created')
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type:
-            print(f"Exception: {exc_type}, {exc_val}, {exc_tb}")
+            logging.error(f"Exception: {exc_type}, {exc_val}, {exc_tb}")
         if self.session:
             self.session.close()
-    
-    def __call__(self, *args):
-        pass
-    
-
+            logging.info('Session closed')
 
     @authenticated
-    def __set_cookies(self):
-        self.session.get(f"{self.base_url}{self.cookies_endpoint}") # type: ignore
-
-
-    @authenticated
-    def get_countries(self):
-        countries_req = self.session.get(f"{self.base_url}{self.countries_endpoint}") # type: ignore
-        print("session", self.session, countries_req)
-        return countries_req.json()
+    def __set_cookies(self) -> None:
+        try:
+            self.session.get(f"{self.base_url}{self.cookies_endpoint}") # type: ignore
+        except RequestException as e:
+            logging.error(f"Failed to set cookies: {e}")
+            raise
 
     @authenticated
-    def get_leaders(self, country: str):
+    def get_countries(self) -> List[str]:
+        """
+        Fetches the list of countries.
+        """
+        try:
+            countries_req = self.session.get(f"{self.base_url}{self.countries_endpoint}") # type: ignore
+            countries_req.raise_for_status()
+            logging.info("Fetched countries successfully.")
+            return countries_req.json()
+        except RequestException as e:
+            logging.error(f"Failed to fetch countries: {e}")
+            return []
+
+    @authenticated
+    def get_leaders(self, country: str) -> None:
+        """
+        Fetches leaders for a given country and stores them in leaders_data.
+        """
         params = {"country": country}
-        req = self.session.get(f"{self.base_url}{self.leaders_endpoint}", params=params) # type: ignore
-        self.leaders_data[country] = req.json()
-    
-    def __p_followed_by_b(self, tag):
-        if tag.name == "p" and tag.next_element and tag.next_element.name == "b":
-            return True
-        else:
-            return False
-    
+        try:
+            req = self.session.get(f"{self.base_url}{self.leaders_endpoint}", params=params) # type: ignore
+            req.raise_for_status()
+            self.leaders_data[country] = req.json()
+            logging.info(f"Fetched leaders for {country}.")
+        except RequestException as e:
+            logging.error(f"Failed to fetch leaders for {country}: {e}")
+            self.leaders_data[country] = []
+
+    @staticmethod
+    def __p_followed_by_b(tag) -> bool:
+        return tag.name == "p" and getattr(tag.next_element, "name", None) == "b"
+
     @authenticated
-    def get_first_paragraph(self, wikipedia_url: str):
-        """returns the first paragraph (defined by the HTML tag <p>) with details about the leader"""
-        wiki_html = self.session.get(wikipedia_url).text # type: ignore
-        soup = BeautifulSoup(wiki_html, "html.parser")
+    def __get_first_paragraph(self, wikipedia_url: str) -> str:
+        """
+        Returns the first paragraph with details about the leader.
+        """
+        try:
+            wiki_html = self.session.get(wikipedia_url, timeout=10).text # type: ignore
+            soup = BeautifulSoup(wiki_html, "html.parser")
+            first_paragraph_tag = soup.find(self.__p_followed_by_b)
 
-        first_paragraph_tag = soup.find(self.__p_followed_by_b)
+            if first_paragraph_tag:
+                raw_text = first_paragraph_tag.get_text()
+                # Remove [ ... ]
+                cleaned = re.sub(r"\[.*?\]", "", raw_text)
+                # Remove / ... / and optional ;
+                cleaned = re.sub(r"/.*?/;?", "", cleaned)
+                # Remove (word ⓘ) or word ⓘ, including the first ( before ⓘ if followed by )
+                cleaned = re.sub(r"\s*\([^\(\)]*?\b\w+\s*ⓘ\)", "", cleaned)  # (word ⓘ)
+                cleaned = re.sub(r"\s*\b\w+\s*ⓘ", "", cleaned)  # word ⓘ
+                if not cleaned.strip():
+                    return "No information available."
+                return cleaned.strip()
+            else:
+                return "No information available."
+        except Exception as e:
+            logging.error(f"Error parsing Wikipedia page: {wikipedia_url} - {e}")
+            return "No information available."
 
-        if first_paragraph_tag:
-            raw_text = first_paragraph_tag.get_text()
-            # Remove [ ... ]
-            cleaned = re.sub(r"\[.*?\]", "", raw_text)
-            # Remove / ... / and optional ;
-            cleaned = re.sub(r"/.*?/;?", "", cleaned)
-            # Remove (word ⓘ) or word ⓘ, including the first ( before ⓘ if followed by )
-            cleaned = re.sub(r"\s*\([^\(\)]*?\b\w+\s*ⓘ\)", "", cleaned)  # (word ⓘ)
-            cleaned = re.sub(r"\s*\b\w+\s*ⓘ", "", cleaned)  # word ⓘ
-            # Checking if the cleaned text is empty
-            if not cleaned.strip():
-                return "No information available.", wikipedia_url
-            return cleaned.strip()
-    
-    def add_first_wiki_par(self):
-        for leaders in self.leaders_data.values():
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                leaders_wiki_urls = [leader["wikipedia_url"] for leader in leaders]
-                paragraphs = list(executor.map(self.get_first_paragraph, leaders_wiki_urls))
-                for leader, par in zip(leaders, paragraphs):
-                    leader["first_wiki_par"] = par
+    def add_first_wiki_par(self) -> None:
+        """
+        Adds the first Wikipedia paragraph to each leader in leaders_data.
+        """
+        wiki_urls = []
+        leaders_data_values = self.leaders_data.values()
+        for leaders in leaders_data_values:
+            wiki_urls.extend(leader["wikipedia_url"] for leader in leaders)
 
-    
-    def to_json_file(self, filepath: str = "./leaders.json"):
-        with open(filepath, "w", encoding="utf8") as leaders_file:
-            leaders_file.write(json.dumps(self.leaders_data, ensure_ascii=False))
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            paragraphs = list(executor.map(self.__get_first_paragraph, wiki_urls))
+
+        # Flatten the list of leaders
+        all_leaders = sum(leaders_data_values, [])
+        for leader, par in zip(all_leaders, paragraphs):
+            leader["first_wiki_par"] = par
+
+    def to_json_file(self, filepath: str = "./leaders.json") -> None:
+        """
+        Writes leaders_data to a JSON file.
+        """
+        try:
+            with open(filepath, "w", encoding="utf8") as leaders_file:
+                json.dump(self.leaders_data, leaders_file, ensure_ascii=False)
+            logging.info(f"Leaders data written to {filepath}")
+        except Exception as e:
+            logging.error(f"Failed to write JSON file: {e}")
