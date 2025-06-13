@@ -151,3 +151,24 @@ class WikipediaScraper:
             logging.info(f"Leaders data written to {filepath}")
         except Exception as e:
             logging.error(f"Failed to write JSON file: {e}")
+
+    def to_csv_file(self, filepath: str = "./leaders.csv") -> None:
+        """
+        Writes leaders_data to a CSV file using pandas.
+        """
+        try:
+            import pandas as pd
+            # Flatten leaders_data into a list of dicts, adding country info
+            flat_data = []
+            for country, leaders in self.leaders_data.items():
+                for leader in leaders:
+                    leader_row = leader.copy()
+                    leader_row["country"] = country
+                    flat_data.append(leader_row)
+            df = pd.DataFrame(flat_data)
+            df.to_csv(filepath, index=False, encoding="utf-8-sig")
+            logging.info(f"Leaders data written to {filepath}")
+        except ImportError:
+            logging.error("pandas is not installed. Cannot write to CSV file.")
+        except Exception as e:
+            logging.error(f"Failed to write CSV file: {e}")

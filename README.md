@@ -1,13 +1,13 @@
 # Wikipedia Scraper
 
-A Python project for querying an API to obtain a list of countries and their past political leaders, extract and sanitize their short bio from Wikipedia and save the data as JSON file.
+A Python project for querying an API to obtain a list of countries and their past political leaders, extract and sanitize their short bio from Wikipedia and save the data as JSON or CSV file.
 
 ## Features
 
 - Fetches a list of countries and their leaders from an [API](https://country-leaders.onrender.com/docs#/)
 - Scrapes the first paragraph of the leaders' bio from Wikipedia pages.
 - Parses and processes the scraped data.
-- Outputs results in JSON format.
+- Outputs results in JSON or CSV format.
 
 
 ## Installation
@@ -33,5 +33,9 @@ A Python project for querying an API to obtain a list of countries and their pas
 
 To run the scraper from the command line:
 ```sh
-python main.py
-
+python main.py -t json
+```
+To run the scraper and save the output in CSV format:
+```sh
+python main.py -t csv
+```
