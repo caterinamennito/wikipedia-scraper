@@ -1,6 +1,6 @@
 from requests import Session, RequestException
 import re
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, element as bs4_element
 import concurrent.futures
 import json
 import functools
@@ -78,10 +78,6 @@ class WikipediaScraper:
             logging.error(f"Failed to fetch leaders for {country}: {e}")
             self.leaders_data[country] = []
 
-    @staticmethod
-    def __p_followed_by_b(tag) -> bool:
-        return tag.name == "p" and getattr(tag.next_element, "name", None) == "b"
-
     @authenticated
     def __get_first_paragraph(self, wikipedia_url: str) -> str:
         """
@@ -90,20 +86,35 @@ class WikipediaScraper:
         try:
             wiki_html = self.session.get(wikipedia_url, timeout=10).text # type: ignore
             soup = BeautifulSoup(wiki_html, "html.parser")
-            first_paragraph_tag = soup.find(self.__p_followed_by_b)
+            
+            # Extract the language from the URL
+            lang = wikipedia_url.split("/")[2].split(".")[0]
 
-            if first_paragraph_tag:
-                raw_text = first_paragraph_tag.get_text()
+            # Find first <div> tag with attribute lang=<lang>
+            first_div = soup.find("div", {'lang': lang})
+
+            # Find all <p> tags within that <div> before another <div> tag
+            if first_div and isinstance(first_div, bs4_element.Tag):
+                first_paragraph = ''
+                for tag in first_div.find_all("p", recursive=False):
+                    first_paragraph += tag.get_text() + " "
+                    next_tag = tag.find_next_sibling()
+                    # Stop if the next sibling is a <div>
+                    if next_tag and getattr(next_tag, "name", None) == "div":
+                        break
+
+                # Remove \n
+                first_paragraph = first_paragraph.replace("\n", " ")
                 # Remove [ ... ]
-                cleaned = re.sub(r"\[.*?\]", "", raw_text)
+                first_paragraph = re.sub(r"\[.*?\]", "", first_paragraph)
                 # Remove / ... / and optional ;
-                cleaned = re.sub(r"/.*?/;?", "", cleaned)
+                first_paragraph = re.sub(r"/.*?/;?", "", first_paragraph)
                 # Remove (word ⓘ) or word ⓘ, including the first ( before ⓘ if followed by )
-                cleaned = re.sub(r"\s*\([^\(\)]*?\b\w+\s*ⓘ\)", "", cleaned)  # (word ⓘ)
-                cleaned = re.sub(r"\s*\b\w+\s*ⓘ", "", cleaned)  # word ⓘ
-                if not cleaned.strip():
+                first_paragraph = re.sub(r"\s*\([^\(\)]*?\b\w+\s*ⓘ\)", "", first_paragraph)  # (word ⓘ)
+                first_paragraph = re.sub(r"\s*\b\w+\s*ⓘ", "", first_paragraph)  # word ⓘ
+                if not first_paragraph.strip():
                     return "No information available."
-                return cleaned.strip()
+                return first_paragraph.strip()
             else:
                 return "No information available."
         except Exception as e:
