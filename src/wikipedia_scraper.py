@@ -1,4 +1,4 @@
-from requests import Session, RequestException
+from requests import Session, RequestException, adapters
 import re
 from bs4 import BeautifulSoup, element as bs4_element
 import concurrent.futures
@@ -30,6 +30,9 @@ class WikipediaScraper:
 
     def __enter__(self) -> "WikipediaScraper":
         self.session = Session()
+        # Increase the connection pool size 
+        adapter = adapters.HTTPAdapter(pool_connections=10, pool_maxsize=50)
+        self.session.mount('https://', adapter)
         self.__set_cookies()
         logging.info('Session created')
         return self
